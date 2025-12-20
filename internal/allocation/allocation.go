@@ -80,7 +80,7 @@ func NewAllocation(
 }
 
 func (a *Allocation) serialize() *serializedAllocation {
-	var serilazied serializedAllocation
+	var serialized serializedAllocation
 	var err error
 	if serialized.FiveTuple, err = a.fiveTuple.MarshalBinary(); err != nil {
 		a.log.Errorf("failed to marshal FiveTuple: %v", err)
@@ -116,13 +116,8 @@ func (a *Allocation) serialize() *serializedAllocation {
 	return &serialized
 }
 
-<<<<<<< HEAD
 func (a *Allocation) deserialize(serialized *serializedAllocation) {
 	if err := a.fiveTuple.UnmarshalBinary(serialized.FiveTuple); err != nil {
-=======
-func (a *Allocation) deserialize(serilazied *serializedAllocation) {
-	if err := a.fiveTuple.UnmarshalBinary(serilazied.FiveTuple); err != nil {
->>>>>>> 281e842 (feat: Add storage interface for allocations)
 		a.log.Errorf("failed to unmarshal FiveTuple: %v", err)
 
 		return

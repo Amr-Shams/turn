@@ -102,6 +102,9 @@ func (m *Manager) Close() error {
 			return err
 		}
 	}
+	if m.storage == nil {
+		return nil
+	}
 	if err := m.storage.Close(); err != nil {
 		return err
 	}
@@ -154,7 +157,9 @@ func (m *Manager) CreateAllocation(
 	m.lock.Lock()
 	m.allocations[alloc.fiveTuple.Fingerprint()] = alloc
 	m.lock.Unlock()
-	m.storage.AddAllocation(alloc)
+	if m.storage != nil {
+		m.storage.AddAllocation(alloc)
+	}
 
 	if m.EventHandler.OnAllocationCreated != nil {
 		m.EventHandler.OnAllocationCreated(fiveTuple.SrcAddr, fiveTuple.DstAddr,
@@ -178,7 +183,9 @@ func (m *Manager) DeleteAllocation(fiveTuple *FiveTuple) {
 		return
 	}
 	delete(m.allocations, fingerprint)
-	m.storage.DeleteAllocation(fingerprint)
+	if m.storage != nil {
+		m.storage.DeleteAllocation(fingerprint)
+	}
 	m.lock.Unlock()
 
 	if allocation == nil {

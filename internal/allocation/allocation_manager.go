@@ -21,6 +21,7 @@ type ManagerConfig struct {
 	AllocateConn       func(network string, requestedPort int) (net.Conn, net.Addr, error)
 	PermissionHandler  func(sourceAddr net.Addr, peerIP net.IP) bool
 	EventHandler       EventHandler
+	Storage            Storage
 }
 
 type reservation struct {
@@ -40,6 +41,7 @@ type Manager struct {
 	allocateConn       func(network string, requestedPort int) (net.Conn, net.Addr, error)
 	permissionHandler  func(sourceAddr net.Addr, peerIP net.IP) bool
 	EventHandler       EventHandler
+	storage            Storage
 }
 
 // NewManager creates a new instance of Manager.
@@ -55,11 +57,12 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 
 	return &Manager{
 		log:                config.LeveledLogger,
-		allocations:        make(map[FiveTupleFingerprint]*Allocation, 64),
+		allocations:        make(map[FiveTupleFingerprint]*Allocation),
 		allocatePacketConn: config.AllocatePacketConn,
 		allocateConn:       config.AllocateConn,
 		permissionHandler:  config.PermissionHandler,
 		EventHandler:       config.EventHandler,
+		storage:            config.Storage,
 	}, nil
 }
 
@@ -98,6 +101,9 @@ func (m *Manager) Close() error {
 		if err := a.Close(); err != nil {
 			return err
 		}
+	}
+	if err := m.storage.Close(); err != nil {
+		return err
 	}
 
 	return nil
@@ -146,8 +152,9 @@ func (m *Manager) CreateAllocation(
 	})
 
 	m.lock.Lock()
-	m.allocations[fiveTuple.Fingerprint()] = alloc
+	m.allocations[alloc.fiveTuple.Fingerprint()] = alloc
 	m.lock.Unlock()
+	m.storage.AddAllocation(alloc)
 
 	if m.EventHandler.OnAllocationCreated != nil {
 		m.EventHandler.OnAllocationCreated(fiveTuple.SrcAddr, fiveTuple.DstAddr,
@@ -164,8 +171,14 @@ func (m *Manager) DeleteAllocation(fiveTuple *FiveTuple) {
 	fingerprint := fiveTuple.Fingerprint()
 
 	m.lock.Lock()
-	allocation := m.allocations[fingerprint]
+	allocation, ok := m.allocations[fingerprint]
+	if !ok {
+		m.lock.Unlock()
+
+		return
+	}
 	delete(m.allocations, fingerprint)
+	m.storage.DeleteAllocation(fingerprint)
 	m.lock.Unlock()
 
 	if allocation == nil {
@@ -289,8 +302,8 @@ func (m *Manager) AddTCPConnection( // nolint: cyclop
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	for i := range m.allocations {
-		if _, ok := m.allocations[i].tcpConnections[connectionID]; ok {
+	for _, a := range m.allocations {
+		if _, ok := a.tcpConnections[connectionID]; ok {
 			closeConn()
 
 			return 0, errFailedToGenerateConnectionID
@@ -327,4 +340,32 @@ func (m *Manager) GetTCPConnection(username string, connectionID proto.Connectio
 	}
 
 	return nil
+}
+
+// LoadAllocations loads allocations from storage.
+func (m *Manager) LoadAllocations(turnSocket net.PacketConn) {
+	if m.storage == nil {
+		return
+	}
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	for _, alloc := range m.storage.GetAllocations() {
+		alloc.TurnSocket = turnSocket
+		m.allocations[alloc.fiveTuple.Fingerprint()] = alloc
+		go alloc.packetHandler(m)
+	}
+}
+
+// SaveAllocations saves all allocations to storage.
+func (m *Manager) SaveAllocations() {
+	if m.storage == nil {
+		return
+	}
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	for _, alloc := range m.allocations {
+		alloc.TurnSocket = nil
+		m.storage.AddAllocation(alloc)
+	}
 }

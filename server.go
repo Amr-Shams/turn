@@ -36,6 +36,7 @@ type Server struct {
 	listenerConfigs    []ListenerConfig
 	allocationManagers []*allocation.Manager
 	inboundMTU         int
+	storage            allocation.Storage
 }
 
 // NewServer creates the Pion TURN server.
@@ -72,6 +73,7 @@ func NewServer(config ServerConfig) (*Server, error) { //nolint:gocognit,cyclop
 		nonceHash:          nonceHash,
 		inboundMTU:         mtu,
 		eventHandler:       config.EventHandler,
+		storage:            config.Storage,
 	}
 
 	if server.channelBindTimeout == 0 {
@@ -145,6 +147,10 @@ func (s *Server) Close() error {
 		}
 	}
 
+	if err := s.storage.Close(); err != nil {
+		errors = append(errors, err)
+	}
+
 	if len(errors) == 0 {
 		return nil
 	}
@@ -183,6 +189,20 @@ func (s *Server) readListener(l net.Listener, am *allocation.Manager) {
 	}
 }
 
+// LoadAllocations loads all allocations from the storage.
+func (s *Server) LoadAllocations() {
+	for i, am := range s.allocationManagers {
+		am.LoadAllocations(s.packetConnConfigs[i].PacketConn)
+	}
+}
+
+// SaveAllocations saves all allocations to the storage.
+func (s *Server) SaveAllocations() {
+	for _, am := range s.allocationManagers {
+		am.SaveAllocations()
+	}
+}
+
 type nilAddressGenerator struct{}
 
 func (n *nilAddressGenerator) Validate() error { return errRelayAddressGeneratorNil }
@@ -212,6 +232,7 @@ func (s *Server) createAllocationManager(
 		PermissionHandler:  handler,
 		EventHandler:       s.eventHandler,
 		LeveledLogger:      s.log,
+		Storage:            s.storage,
 	})
 	if err != nil {
 		return am, err
